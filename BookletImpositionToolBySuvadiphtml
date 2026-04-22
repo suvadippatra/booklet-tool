@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Booklet Imposition Tool</title>
+  <!-- pdf-lib: the only dependency. Full PDF read/write in the browser. -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Design System ─────────────────────────────────────────────── */
+    :root {
+      --ink:      #0d0f14;
+      --paper:    #13161f;
+      --card:     #1a1e2b;
+      --border:   #252a3b;
+      --border2:  #303650;
+      --amber:    #e8a838;
+      --amber-d:  #c4851a;
+      --amber-bg: rgba(232,168,56,.07);
+      --green:    #4db890;
+      --red:      #d96060;
+      --muted:    #6b7394;
+      --text:     #d8dcea;
+      --mono:     'IBM Plex Mono', monospace;
+      --sans:     'IBM Plex Sans', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--ink);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Grid background ──────────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header { margin-bottom: 40px; }
+
+    .logo-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: var(--amber);
+      border-radius: 6px;
+      display: grid; place-items: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    h1 {
+      font-size: 1.65rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    h1 em {
+      color: var(--amber);
+      font-style: normal;
+    }
+    .tagline {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.6;
+      margin-top: 2px;
+    }
+
+    /* ── Steps labels ──────────────────────────────────────────────── */
+    .step-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--amber);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Cards ────────────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+      margin-bottom: 16px;
+    }
+    .card + .card { }
+
+    /* ── Upload zone ──────────────────────────────────────────────── */
+    .drop-zone {
+      border: 2px dashed var(--border2);
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      position: relative;
+      transition: border-color .2s, background .2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--amber);
+      background: var(--amber-bg);
+    }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-icon { font-size: 2.2rem; margin-bottom: 10px; }
+    .drop-text { color: var(--muted); font-size: 0.88rem; }
+    .drop-text strong { color: var(--amber); }
+
+    .file-pill {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: rgba(77,184,144,.08);
+      border: 1px solid rgba(77,184,144,.3);
+      border-radius: 7px;
+    }
+    .file-pill.on { display: flex; }
+    .file-pill-name { font-weight: 600; font-size: 0.9rem; }
+    .file-pill-meta { color: var(--muted); font-size: 0.78rem; margin-top: 1px; }
+
+    /* ── Controls ─────────────────────────────────────────────────── */
+    .ctrl-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px 24px;
+    }
+    @media(max-width:520px){ .ctrl-grid { grid-template-columns: 1fr; } }
+
+    .ctrl { display: flex; flex-direction: column; gap: 7px; }
+    .ctrl label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .ctrl label .unit {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+
+    select {
+      appearance: none;
+      background: var(--paper);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 9px 12px;
+      font-family: var(--sans);
+      font-size: 0.88rem;
+      cursor: pointer;
+      outline: none;
+      transition: border-color .15s;
+    }
+    select:focus { border-color: var(--amber); }
+
+    .range-row { display: flex; align-items: center; gap: 10px; }
+    input[type=range] {
+      flex: 1;
+      accent-color: var(--amber);
+      cursor: pointer;
+    }
+    .rval {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      color: var(--amber);
+      min-width: 46px;
+      text-align: right;
+      font-weight: 600;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--border);
+      margin-top: 18px;
+      padding-top: 18px;
+      gap: 16px;
+    }
+    .toggle-label-text { font-size: 0.88rem; }
+    .toggle-label-text small {
+      display: block;
+      color: var(--muted);
+      font-size: 0.76rem;
+      margin-top: 2px;
+    }
+    .toggle { position: relative; width: 46px; height: 26px; flex-shrink: 0; }
+    .toggle input { display: none; }
+    .knob {
+      position: absolute; inset: 0;
+      background: var(--border2);
+      border-radius: 13px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .knob::after {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      top: 3px; left: 3px;
+      transition: left .2s;
+    }
+    .toggle input:checked + .knob { background: var(--amber); }
+    .toggle input:checked + .knob::after { left: 23px; }
+
+    /* ── Process button ──────────────────────────────────────────── */
+    .run-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--amber);
+      color: var(--ink);
+      border: none;
+      border-radius: 8px;
+      font-family: var(--sans);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .run-btn:hover:not(:disabled) { background: #f0b840; transform: translateY(-1px); }
+    .run-btn:active:not(:disabled) { transform: translateY(0); }
+    .run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Progress ────────────────────────────────────────────────── */
+    .prog-track {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+    .prog-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber-d), var(--amber));
+      width: 0%;
+      transition: width .5s ease;
+      border-radius: 2px;
+    }
+
+    /* ── Log ─────────────────────────────────────────────────────── */
+    .log {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 12px 14px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.8;
+      max-height: 200px;
+      overflow-y: auto;
+      color: var(--muted);
+    }
+    .log .li { color: var(--muted); }
+    .log .ok { color: var(--green); }
+    .log .er { color: var(--red); }
+    .log .st { color: var(--amber); font-weight: 600; }
+    .log .wn { color: #d4a849; }
+
+    /* ── Downloads ───────────────────────────────────────────────── */
+    #dlSection { display: none; }
+    .dl-list { display: flex; flex-direction: column; gap: 10px; }
+    .dl-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 13px 16px;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      gap: 16px;
+    }
+    .dl-title { font-size: 0.88rem; font-weight: 600; }
+    .dl-desc  { font-size: 0.75rem; color: var(--muted); margin-top: 3px; }
+    .dl-btn {
+      background: rgba(77,184,144,.12);
+      color: var(--green);
+      border: 1px solid rgba(77,184,144,.35);
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background .15s;
+      flex-shrink: 0;
+    }
+    .dl-btn:hover { background: rgba(77,184,144,.22); }
+
+    /* ── Info box ────────────────────────────────────────────────── */
+    .info-box {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--amber);
+      border-radius: 0 7px 7px 0;
+      padding: 11px 14px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-top: 12px;
+    }
+    .info-box strong { color: var(--text); }
+
+    #procArea { display: none; margin-top: 16px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo-row">
+      <div class="logo-icon">📖</div>
+      <div>
+        <h1>Booklet <em>Imposition</em> Tool by Suvadip</em></em></h1>
+      </div>
+    </div>
+    <p class="tagline">
+      Resize · Reorder · Register — full saddle-stitch prepress workflow in your browser.<br>
+      No server. No upload. Your PDF never leaves your device.
+    </p>
+  </header>
+
+  <!-- ── Step 1: Upload ──────────────────────────────────── -->
+  <div class="step-label">01 — Input Document</div>
+  <div class="card">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".pdf" />
+      <div class="drop-icon">📄</div>
+      <div class="drop-text"><strong>Click or drop</strong> a PDF here</div>
+    </div>
+    <div class="file-pill" id="filePill">
+      <span style="font-size:1.4rem">✅</span>
+      <div>
+        <div class="file-pill-name" id="fileName">—</div>
+        <div class="file-pill-meta" id="filePages">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 2: Settings ────────────────────────────────── -->
+  <div class="step-label">02 — Imposition Parameters</div>
+  <div class="card">
+    <div class="ctrl-grid">
+
+      <div class="ctrl">
+        <label>Sheets per Signature</label>
+        <select id="sheets">
+          <option value="1">1 sheet — 4 pages per sig</option>
+          <option value="2">2 sheets — 8 pages per sig</option>
+          <option value="3">3 sheets — 12 pages per sig</option>
+          <option value="4" selected>4 sheets — 16 pages per sig</option>
+        </select>
+      </div>
+
+      <div class="ctrl">
+        <label>Binding Gap <span class="unit">(binding gutter)</span></label>
+        <div class="range-row">
+          <input type="range" id="gap" min="20" max="60" value="30" />
+          <span class="rval" id="gapV">30 mm</span>
+        </div>
+      </div>
+
+      <div class="ctrl">
+        <label>Outer Margin <span class="unit">(edge padding)</span></label>
+        <div class="range-row">
+          <input type="range" id="outer" min="0" max="30" value="0" />
+          <span class="rval" id="outerV">0 mm</span>
+        </div>
+      </div>
+
+      <div class="ctrl" style="justify-content:flex-end">
+        <!-- computed preview -->
+        <label>Computed Sub-page Width</label>
+        <div style="font-family:var(--mono);font-size:0.82rem;color:var(--amber);padding:9px 12px;background:var(--paper);border:1px solid var(--border2);border-radius:6px;">
+          <span id="subpagePreview">—</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="toggle-row">
+      <div class="toggle-label-text">
+        Step 3 — Registration Marks
+        <small>Dashed fold guide, signature label, and 4 binding alignment dots</small>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="addMarks" checked />
+        <span class="knob"></span>
+      </label>
+    </div>
+
+    <div class="info-box">
+      <strong>Canvas is always fixed at 277 × 190 mm</strong> (A4 landscape minus 10 mm print borders on each side).
+      Sub-page width = <code style="color:var(--amber)">(277 − gap − 2 × outer_margin) / 2</code>.
+      Pages are <strong>stretched</strong> to fill — aspect ratio is intentionally not preserved.
+    </div>
+  </div>
+
+  <!-- ── Step 3: Run ─────────────────────────────────────── -->
+  <div class="step-label">03 — Process</div>
+  <div class="card">
+    <button class="run-btn" id="runBtn" disabled>
+      ⚙ Run Imposition
+    </button>
+
+    <div id="procArea">
+      <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+      <div class="log" id="logBox"></div>
+    </div>
+  </div>
+
+  <!-- ── Step 4: Download ────────────────────────────────── -->
+  <div class="step-label" id="dlLabel" style="display:none">04 — Download Results</div>
+  <div class="card" id="dlSection">
+    <div class="dl-list" id="dlList"></div>
+  </div>
+
+</div><!-- /wrap -->
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   Booklet Imposition Tool
+   Ports BookletImposition_v2.ipynb to pure browser JavaScript.
+   Library: pdf-lib v1.17.1 — full PDF read/write, no server.
+
+   KEY COORDINATE DIFFERENCE vs PyMuPDF:
+     PyMuPDF  → y=0 at TOP,    y increases downward
+     pdf-lib  → y=0 at BOTTOM, y increases upward  (standard PDF)
+   All y positions in annotations are flipped accordingly.
+════════════════════════════════════════════════════════════ */
+
+const { PDFDocument, rgb, degrees, StandardFonts } = PDFLib;
+
+// ── Physical constants (same as Python notebook) ─────────────
+const MM    = 72 / 25.4;          // 1 mm in PDF points
+const CW    = 277 * MM;           // canvas width  (277 mm in pts)
+const CH    = 190 * MM;           // canvas height (190 mm in pts)
+
+// ── DOM shortcuts ────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const el = (tag, cls, html) => {
+  const e = document.createElement(tag);
+  if (cls)  e.className   = cls;
+  if (html) e.innerHTML   = html;
+  return e;
+};
+
+// ── App state ────────────────────────────────────────────────
+let inputBytes   = null;
+let totalPages   = 0;
+
+// ── Logging ──────────────────────────────────────────────────
+function log(msg, type = 'li') {
+  const box  = $('logBox');
+  const line = el('div', type, `<span style="opacity:.4">${timestamp()}</span>  ${msg}`);
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+function timestamp() {
+  return new Date().toLocaleTimeString('en-GB', { hour12: false });
+}
+function setProgress(pct) {
+  $('progFill').style.width = `${pct}%`;
+}
+
+// ── Sub-page preview ─────────────────────────────────────────
+function updatePreview() {
+  const gap   = +$('gap').value;
+  const outer = +$('outer').value;
+  const w     = (277 - gap - 2 * outer) / 2;
+  $('subpagePreview').textContent = `${w.toFixed(1)} × 190.0 mm`;
+}
+
+$('gap').addEventListener('input',  function () {
+  $('gapV').textContent   = `${this.value} mm`;
+  updatePreview();
+});
+$('outer').addEventListener('input', function () {
+  $('outerV').textContent = `${this.value} mm`;
+  updatePreview();
+});
+updatePreview();
+
+// ── File handling ─────────────────────────────────────────────
+async function loadPDF(file) {
+  if (!file || file.type !== 'application/pdf') {
+    return alert('Please drop a valid PDF file.');
+  }
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      inputBytes = new Uint8Array(e.target.result);
+      const doc  = await PDFDocument.load(inputBytes, { ignoreEncryption: true });
+      totalPages = doc.getPageCount();
+      $('fileName').textContent  = file.name;
+      $('filePages').textContent = `${totalPages} page${totalPages !== 1 ? 's' : ''} detected`;
+      $('filePill').classList.add('on');
+      $('runBtn').disabled = false;
+      $('procArea').style.display = 'block';
+      log(`Loaded "${file.name}" — ${totalPages} pages ready.`, 'ok');
+    } catch (err) {
+      alert(`Could not read PDF: ${err.message}`);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+$('fileInput').addEventListener('change', e => loadPDF(e.target.files[0]));
+
+const dz = $('dropZone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  loadPDF(e.dataTransfer.files[0]);
+});
+
+// ── Helper: ordinal suffix ────────────────────────────────────
+function ordinal(n) {
+  const m100 = n % 100;
+  if (m100 >= 11 && m100 <= 13) return `${n}th`;
+  return `${n}${{ 1:'st', 2:'nd', 3:'rd' }[n % 10] || 'th'}`;
+}
+
+// ── Core logic: Binding Sequence ──────────────────────────────
+// Direct port of Python generate_binding_sequence(total, n).
+// Produces the 1-indexed physical print order for an n-fold booklet.
+// Group size g = 4n. Within each group, pairs alternate twist/no-twist
+// to match the paper-fold geometry.
+function bindingSequence(totalPadded, n) {
+  const g     = 4 * n;
+  const order = [];
+  for (let k = 1; k <= totalPadded / g; k++) {
+    const base = (k - 1) * g;
+    for (let j = 0; j < g; j++) {
+      const p = Math.floor(j / 2);   // pair index
+      const r = j % 2;               // position within pair
+      if (p % 2 === 0)               // even pair — no twist
+        order.push(r === 0 ? base + (g - p) : base + (p + 1));
+      else                           // odd pair — twist
+        order.push(r === 0 ? base + (p + 1) : base + (g - p));
+    }
+  }
+  return order;
+}
+
+// ── Core logic: Padding ───────────────────────────────────────
+// Matches the Python padding logic exactly:
+//   1 short → 1 blank at end
+//   even short → split equally front/back
+//   odd >1 short → extra blank at front
+function padding(total, sigCap) {
+  const need = (sigCap - (total % sigCap)) % sigCap;
+  let front = 0, back = 0;
+  if (need === 0)       { /* nothing */              }
+  else if (need === 1)  { back = 1;                  }
+  else if (need % 2 === 0) { front = back = need / 2; }
+  else { front = Math.floor(need / 2) + 1; back = Math.floor(need / 2); }
+  return { need, front, back };
+}
+
+// ── Step 1: Geometric Normalisation ──────────────────────────
+// Each source page is stretched (keep_proportion=False equivalent)
+// to fit exactly into sub-page dimensions:
+//   width  = (277 − gap − 2·outer) / 2  mm
+//   height = 190 mm   (always)
+// pdf-lib: drawPage({width,height}) applies independent x/y scales → stretch.
+async function step1(srcBytes, gapMm, outerMm) {
+  const wMm    = (277 - gapMm - 2 * outerMm) / 2;
+  const tW     = wMm * MM;
+  const tH     = CH;
+
+  log(`Step 1 › Sub-page target: ${wMm.toFixed(2)} × 190.00 mm`, 'st');
+
+  const srcDoc  = await PDFDocument.load(srcBytes);
+  const outDoc  = await PDFDocument.create();
+  const n       = srcDoc.getPageCount();
+  const indices = [...Array(n).keys()];
+
+  // Embed all pages at once — much faster than one-by-one
+  const emb = await outDoc.embedPdf(srcDoc, indices);
+
+  for (let i = 0; i < n; i++) {
+    const p = outDoc.addPage([tW, tH]);
+    // Non-uniform scale → content stretches to fill exactly (like keep_proportion=False)
+    p.drawPage(emb[i], { x: 0, y: 0, width: tW, height: tH });
+  }
+
+  const bytes = await outDoc.save();
+  log(`Step 1 › Done — ${n} pages resized.`, 'ok');
+  return bytes;
+}
+
+// ── Step 2: Logical Imposition & Padding ─────────────────────
+// Places pairs of resized sub-pages onto 277×190 mm canvas sheets
+// in the correct physical print order for saddle-stitch binding.
+async function step2(resizedBytes, gapMm, outerMm, sheetsPerSig) {
+  const sigCap = sheetsPerSig * 4;
+  const srcDoc = await PDFDocument.load(resizedBytes);
+  const nSrc   = srcDoc.getPageCount();
+
+  const { need, front, back } = padding(nSrc, sigCap);
+  const working  = nSrc + front + back;
+
+  log(`Step 2 › ${nSrc} pages | Padding: ${need} (↑${front} front, ↓${back} back)`, 'st');
+
+  const order    = bindingSequence(working, sheetsPerSig);
+  const pageWPts = (277 - gapMm - 2 * outerMm) / 2 * MM;
+  const gapPts   = gapMm   * MM;
+  const outerPts = outerMm * MM;
+  const rightX   = outerPts + pageWPts + gapPts;
+
+  const outDoc  = await PDFDocument.create();
+  const indices = [...Array(nSrc).keys()];
+  const allEmb  = await outDoc.embedPdf(srcDoc, indices);
+
+  for (let i = 0; i < order.length; i += 2) {
+    const sheet = outDoc.addPage([CW, CH]);
+
+    // Convert 1-indexed sequence to 0-indexed source page, offset for front padding
+    const lIdx  = (order[i]     - 1) - front;
+    const rIdx  = (order[i + 1] - 1) - front;
+
+    // Padding slots are simply left blank (white); only real pages are drawn
+    if (lIdx >= 0 && lIdx < nSrc)
+      sheet.drawPage(allEmb[lIdx], { x: outerPts, y: 0, width: pageWPts, height: CH });
+    if (rIdx >= 0 && rIdx < nSrc)
+      sheet.drawPage(allEmb[rIdx], { x: rightX,   y: 0, width: pageWPts, height: CH });
+  }
+
+  const bytes = await outDoc.save();
+  log(`Step 2 › Done — ${outDoc.getPageCount()} imposed sheets.`, 'ok');
+  return bytes;
+}
+
+// ── Step 3: Registration Annotations ─────────────────────────
+// Adds to each sheet:
+//   • Dashed centre fold line  (50% opacity)
+//   • Fold/sheet label on even sheets, rotated 90°, centred in a gap
+//   • 4 registration dots evenly spaced along the fold line
+//
+// NOTE — y-axis flip:
+//   PyMuPDF dot at y = 20 mm from TOP    → pdf-lib y = CH − 20·MM  (near top visually)
+//   PyMuPDF dot at y = CH−20·MM from TOP → pdf-lib y = 20·MM       (near bottom)
+async function step3(imposedBytes, sheetsPerSig) {
+  log('Step 3 › Applying registration marks…', 'st');
+
+  const doc  = await PDFDocument.load(imposedBytes);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+
+  const midX    = CW / 2;
+  const fsize   = 12;
+  const pad     = 12;   // gap padding around text label (pts)
+  const lnCol   = rgb(0.6, 0.6, 0.6);
+  const txtCol  = rgb(0.2, 0.2, 0.2);
+  const dotCol  = rgb(0, 0, 0);
+
+  // Dash: ≈1.5 mm on, 2 mm off (same as Python: dash_on_pts, dash_off_pts)
+  const da = [1.5 * MM, 2.0 * MM];
+
+  // Registration dot y positions in pdf-lib coordinates (y=0 at bottom):
+  // Python used: 20mm, 20mm+avail/3, 20mm+2·avail/3, H−20mm  (y from top)
+  // Flipped:     CH−20mm, CH−20mm−avail/3, CH−20mm−2·avail/3, 20mm
+  const avail = CH - 40 * MM;
+  const dotY  = [
+    CH - 20 * MM,
+    CH - 20 * MM - avail / 3,
+    CH - 20 * MM - 2 * avail / 3,
+    20 * MM,
+  ];
+
+  const pages = doc.getPages();
+
+  for (let idx = 0; idx < pages.length; idx++) {
+    const pg      = pages[idx];
+    const pageNum = idx + 1;
+
+    if (pageNum % 2 !== 0) {
+      // ── Odd sheet: plain dashed fold line ─────────────────
+      pg.drawLine({
+        start: { x: midX, y: 0 }, end: { x: midX, y: CH },
+        thickness: 1, color: lnCol, opacity: 0.5,
+        dashArray: da, dashPhase: 0,
+      });
+
+    } else {
+      // ── Even sheet: fold line with a gap cut out for the label ──
+      const ei       = Math.floor(idx / 2);        // 0-based even-sheet counter
+      const foldNum  = Math.floor(ei / sheetsPerSig) + 1;
+      const foldPage = (ei % sheetsPerSig) + 1;
+      const text     = `${ordinal(foldNum)} fold page ${foldPage}`;
+      const tW       = font.widthOfTextAtSize(text, fsize);   // label width (= rotated height)
+
+      // In pdf-lib (y-up) the visual centre of the page is CH/2.
+      // The gap in the fold line is symmetrically centred there.
+      const centre = CH / 2;
+      const gBot   = centre - tW / 2 - pad;   // gap starts (lower)
+      const gTop   = centre + tW / 2 + pad;   // gap ends   (upper)
+
+      pg.drawLine({
+        start: { x: midX, y: 0    }, end: { x: midX, y: gBot },
+        thickness: 1, color: lnCol, opacity: 0.5, dashArray: da, dashPhase: 0,
+      });
+      pg.drawLine({
+        start: { x: midX, y: gTop }, end: { x: midX, y: CH   },
+        thickness: 1, color: lnCol, opacity: 0.5, dashArray: da, dashPhase: 0,
+      });
+
+      // Rotated label: rotate=90° means text goes UPWARD from anchor in pdf-lib.
+      // Anchor y = centre − tW/2 so the text is vertically centred.
+      pg.drawText(text, {
+        x: midX + fsize * 0.3,
+        y: centre - tW / 2,
+        size: fsize, font,
+        color: txtCol,
+        rotate: degrees(90),
+        opacity: 0.5,
+      });
+    }
+
+    // ── Registration dots (every sheet) ───────────────────────
+    for (const y of dotY) {
+      pg.drawCircle({  // outer ring
+        x: midX, y, size: 1.0 * MM,
+        borderColor: dotCol, borderWidth: 0.5,
+      });
+      pg.drawCircle({  // filled centre dot
+        x: midX, y, size: 0.3 * MM,
+        color: dotCol, borderColor: dotCol, borderWidth: 0.5,
+      });
+    }
+  }
+
+  const bytes = await doc.save();
+  log(`Step 3 › Marks applied to all ${pages.length} sheets.`, 'ok');
+  return bytes;
+}
+
+// ── Download helper ───────────────────────────────────────────
+function addDownload(bytes, filename, title, desc) {
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url  = URL.createObjectURL(blob);
+  const item = el('div', 'dl-item');
+  item.innerHTML = `
+    <div>
+      <div class="dl-title">${title}</div>
+      <div class="dl-desc">${desc}</div>
+    </div>
+    <a href="${url}" download="${filename}" class="dl-btn">⬇ Download</a>
+  `;
+  $('dlList').appendChild(item);
+}
+
+// ── Run all steps ─────────────────────────────────────────────
+$('runBtn').addEventListener('click', async () => {
+  const gapMm  = +$('gap').value;
+  const outerMm= +$('outer').value;
+  const sheets = +$('sheets').value;
+  const marks  = $('addMarks').checked;
+
+  $('runBtn').disabled = true;
+  $('procArea').style.display = 'block';
+  $('dlSection').style.display = 'none';
+  $('dlLabel').style.display   = 'none';
+  $('dlList').innerHTML = '';
+  $('logBox').innerHTML = '';
+  setProgress(5);
+
+  try {
+    // ── Phase 1 ──────────────────────────────────────────────
+    const r1 = await step1(inputBytes, gapMm, outerMm);
+    setProgress(33);
+    const wMm = (277 - gapMm - 2 * outerMm) / 2;
+    addDownload(r1, 'Step1_Resized.pdf',
+      '① Resized Sub-pages',
+      `Each page stretched to ${wMm.toFixed(1)} × 190 mm sub-page dimensions`);
+
+    // ── Phase 2 ──────────────────────────────────────────────
+    const r2 = await step2(r1, gapMm, outerMm, sheets);
+    setProgress(66);
+    addDownload(r2, 'Step2_Imposed.pdf',
+      '② Imposed Booklet',
+      'Pages placed in physical print order on 277 × 190 mm canvas sheets');
+
+    // ── Phase 3 (optional) ───────────────────────────────────
+    if (marks) {
+      const r3 = await step3(r2, sheets);
+      setProgress(92);
+      addDownload(r3, 'Step3_Final_Annotated.pdf',
+        '③ Final + Registration Marks',
+        'Dashed fold guide, signature labels, and binding alignment dots');
+    }
+
+    setProgress(100);
+    log('All phases complete — download your files below.', 'ok');
+    $('dlSection').style.display = 'block';
+    $('dlLabel').style.display   = '';
+
+  } catch (err) {
+    log(`ERROR: ${err.message}`, 'er');
+    console.error(err);
+  }
+
+  $('runBtn').disabled = false;
+});
+</script>
+</body>
+</html>
